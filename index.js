@@ -1,28 +1,34 @@
 const express = require("express");
-const { Client, GatewayIntentBits } = require("discord.js");
 const fetch = require("node-fetch");
+const { Client, GatewayIntentBits } = require("discord.js");
+
+/* ---------------- WEB SERVER (KEEPS RENDER AWAKE) ---------------- */
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get("/", (req, res) => {
-  res.send("Bot is running");
+  res.send("Steam tracker bot is running");
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Web server running on port ${PORT}`);
 });
 
+/* ---------------- DISCORD CLIENT ---------------- */
+
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages],
+  intents: [GatewayIntentBits.Guilds],
 });
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
-const DISCORD_USER_ID = process.env.DISCORD_USER_ID;
+const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const FRIENDS = process.env.FRIENDS.split(",");
 
 let lastStatus = {};
+
+/* ---------------- STEAM FUNCTIONS ---------------- */
 
 async function getFriendStatus(steamId) {
   const url = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${STEAM_API_KEY}&steamids=${steamId}`;
@@ -31,41 +37,46 @@ async function getFriendStatus(steamId) {
   return data.response.players[0];
 }
 
-async function checkFriends() {
-  for (const friendId of FRIENDS) {
-    try {
-      const player = await getFriendStatus(friendId);
+async function sendLog(message) {
+  try {
+    const channel = await client.channels.fetch(LOG_CHANNEL_ID);
+    if (channel) channel.send(message);
+  } catch (err) {
+    console.error("Failed to send log:", err);
+  }
+}
 
+async function checkFriends() {
+  for (const steamId of FRIENDS) {
+    try {
+      const player = await getFriendStatus(steamId);
       if (!player) continue;
 
       const name = player.personaname;
       const gameId = player.gameid || null;
       const gameName = player.gameextrainfo || null;
 
-      const last = lastStatus[friendId];
+      const last = lastStatus[steamId];
 
       if (!last?.gameId && gameId) {
-        sendDM(`${name} started playing **${gameName}**`);
+        sendLog(`🟢 **${name}** started playing **${gameName}**`);
       }
 
       if (last?.gameId && !gameId) {
-        sendDM(`${name} stopped playing **${last.gameName}**`);
+        sendLog(`🔴 **${name}** stopped playing **${last.gameName}**`);
       }
 
-      lastStatus[friendId] = { gameId, gameName };
-    } catch (e) {
-      console.error("Error checking friend:", e);
+      lastStatus[steamId] = { gameId, gameName };
+    } catch (err) {
+      console.error("Error checking Steam ID:", steamId, err);
     }
   }
 }
 
-async function sendDM(msg) {
-  const user = await client.users.fetch(DISCORD_USER_ID);
-  user.send(msg);
-}
+/* ---------------- BOT READY ---------------- */
 
 client.once("ready", () => {
-  console.log("Bot is online!");
+  console.log(`Bot logged in as ${client.user.tag}`);
   checkFriends();
   setInterval(checkFriends, 30000);
 });
