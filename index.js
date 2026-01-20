@@ -1,85 +1,112 @@
-const express = require("express");
-const { Client, GatewayIntentBits } = require("discord.js");
+import { Client, GatewayIntentBits } from "discord.js";
+import fetch from "node-fetch";
 
-/* ---------------- WEB SERVER ---------------- */
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get("/", (req, res) => {
-  res.send("Steam tracker bot is running");
-});
-
-app.listen(PORT, () => {
-  console.log(`Web server running on port ${PORT}`);
-});
-
-/* ---------------- DISCORD CLIENT ---------------- */
-
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
-});
-
+// ================== CONFIG ==================
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
-const FRIENDS = process.env.FRIENDS.split(",");
 
-let lastStatus = {};
+// Steam IDs to track
+const FRIEND_STEAM_IDS = [
+  "76561199230809711",
+  "76561199145999818",
+  "76561199521428784",
+  "76561199512325915",
+  "76561199486383594",
+  "76561199204929088"
+];
 
-/* ---------------- STEAM ---------------- */
+// ===========================================
 
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds]
+});
+
+// Stores last known game per friend
+const lastStatus = {};
+
+// -------------------------------------------
+// Get Steam player info
 async function getFriendStatus(steamId) {
-  const url = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${STEAM_API_KEY}&steamids=${steamId}`;
-  const res = await fetch(url); // ← native fetch
+  const url =
+    `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/` +
+    `?key=${STEAM_API_KEY}&steamids=${steamId}`;
+
+  const res = await fetch(url);
   const data = await res.json();
+
+  if (!data.response.players.length) return null;
   return data.response.players[0];
 }
 
-async function sendLog(message) {
-  try {
-    const channel = await client.channels.fetch(LOG_CHANNEL_ID);
-    if (channel) await channel.send(message);
-  } catch (err) {
-    console.error("Failed to send log:", err);
-  }
-}
+// -------------------------------------------
+// Initial scan (startup)
+async function initialCheck() {
+  const channel = await client.channels.fetch(LOG_CHANNEL_ID);
 
-async function checkFriends() {
-  console.log("Checking friends...");
-
-  for (const steamId of FRIENDS) {
+  for (const steamId of FRIEND_STEAM_IDS) {
     try {
       const player = await getFriendStatus(steamId);
       if (!player) continue;
 
-      const name = player.personaname;
-      const gameId = player.gameid || null;
-      const gameName = player.gameextrainfo || null;
+      lastStatus[steamId] = player.gameextrainfo || null;
 
-      const last = lastStatus[steamId];
-
-      if (!last?.gameId && gameId) {
-        sendLog(`🟢 **${name}** started playing **${gameName}**`);
+      if (player.gameextrainfo) {
+        await channel.send(
+          `🔵 **[Startup] ${player.personaname}** is playing **${player.gameextrainfo}**`
+        );
       }
-
-      if (last?.gameId && !gameId) {
-        sendLog(`🔴 **${name}** stopped playing **${last.gameName}**`);
-      }
-
-      lastStatus[steamId] = { gameId, gameName };
     } catch (err) {
-      console.error("Steam check failed:", err);
+      console.error("Startup error:", steamId, err);
     }
   }
 }
 
-/* ---------------- READY ---------------- */
+// -------------------------------------------
+// Repeating check
+async function checkFriends() {
+  const channel = await client.channels.fetch(LOG_CHANNEL_ID);
 
-client.once("ready", () => {
-  console.log(`Bot logged in as ${client.user.tag}`);
-  checkFriends();
-  setInterval(checkFriends, 30000);
+  for (const steamId of FRIEND_STEAM_IDS) {
+    try {
+      const player = await getFriendStatus(steamId);
+      if (!player) continue;
+
+      const currentGame = player.gameextrainfo || null;
+      const previousGame = lastStatus[steamId] || null;
+
+      // Game started
+      if (!previousGame && currentGame) {
+        await channel.send(
+          `🟢 **${player.personaname} started playing ${currentGame}**`
+        );
+      }
+
+      // Game stopped
+      if (previousGame && !currentGame) {
+        await channel.send(
+          `🔴 **${player.personaname} stopped playing ${previousGame}**`
+        );
+      }
+
+      lastStatus[steamId] = currentGame;
+    } catch (err) {
+      console.error("Error checking Steam ID:", steamId, err);
+    }
+  }
+}
+
+// -------------------------------------------
+// Bot ready
+client.once("ready", async () => {
+  console.log(`Logged in as ${client.user.tag}`);
+
+  const channel = await client.channels.fetch(LOG_CHANNEL_ID);
+  await channel.send("🟡 **Tracking started**");
+
+  await initialCheck();
+  setInterval(checkFriends, 30_000);
 });
 
+// -------------------------------------------
 client.login(DISCORD_TOKEN);
