@@ -1,8 +1,7 @@
 const express = require("express");
-const fetch = require("node-fetch");
 const { Client, GatewayIntentBits } = require("discord.js");
 
-/* ---------------- WEB SERVER (KEEPS RENDER AWAKE) ---------------- */
+/* ---------------- WEB SERVER ---------------- */
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,11 +27,11 @@ const FRIENDS = process.env.FRIENDS.split(",");
 
 let lastStatus = {};
 
-/* ---------------- STEAM FUNCTIONS ---------------- */
+/* ---------------- STEAM ---------------- */
 
 async function getFriendStatus(steamId) {
   const url = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${STEAM_API_KEY}&steamids=${steamId}`;
-  const res = await fetch(url);
+  const res = await fetch(url); // ← native fetch
   const data = await res.json();
   return data.response.players[0];
 }
@@ -40,13 +39,15 @@ async function getFriendStatus(steamId) {
 async function sendLog(message) {
   try {
     const channel = await client.channels.fetch(LOG_CHANNEL_ID);
-    if (channel) channel.send(message);
+    if (channel) await channel.send(message);
   } catch (err) {
     console.error("Failed to send log:", err);
   }
 }
 
 async function checkFriends() {
+  console.log("Checking friends...");
+
   for (const steamId of FRIENDS) {
     try {
       const player = await getFriendStatus(steamId);
@@ -68,12 +69,12 @@ async function checkFriends() {
 
       lastStatus[steamId] = { gameId, gameName };
     } catch (err) {
-      console.error("Error checking Steam ID:", steamId, err);
+      console.error("Steam check failed:", err);
     }
   }
 }
 
-/* ---------------- BOT READY ---------------- */
+/* ---------------- READY ---------------- */
 
 client.once("ready", () => {
   console.log(`Bot logged in as ${client.user.tag}`);
